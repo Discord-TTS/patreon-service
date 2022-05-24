@@ -14,11 +14,30 @@ mod macros;
 
 type ResponseResult<T> = Result<T, Error>;
 
-#[derive(serde::Serialize, Copy, Clone, Debug)]
+#[derive(Clone, Copy)]
 enum PatreonTier {
     Basic,
     Extra,
 }
+
+#[derive(serde::Serialize, Clone, Copy)]
+struct PatreonTierInfo {
+    tier: u8,
+    entitled_servers: u8,
+}
+
+impl From<PatreonTier> for PatreonTierInfo {
+    fn from(tier: PatreonTier) -> Self {
+        Self {
+            tier: 0, // Future tiers with higher privileges
+            entitled_servers: match tier {
+                PatreonTier::Basic => 2,
+                PatreonTier::Extra => 5,
+            }
+        }
+    }
+}
+
 
 #[derive(serde::Deserialize, serde::Serialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(transparent)]
@@ -36,7 +55,7 @@ struct Config {
 
 
 struct State {
-    members: parking_lot::RwLock<HashMap<DiscordUserId, PatreonTier>>,
+    members: parking_lot::RwLock<HashMap<DiscordUserId, PatreonTierInfo>>,
     refresh_task: tokio::sync::mpsc::Sender<()>,
     reqwest: reqwest::Client,
     config: Config,
@@ -141,8 +160,8 @@ async fn main() -> Result<()> {
     let app = axum::Router::new()
         .route("/members/:member_id", axum::routing::get(fetch_member))
         .route("/refresh", axum::routing::post(refresh_members))
-        .route("/members", axum::routing::get(fetch_members))
-        .route("/patreon", axum::routing::post(webhook_recv));
+        .route("/patreon", axum::routing::post(webhook_recv))
+        .route("/members", axum::routing::get(fetch_members));
 
     tracing::info!("Binding to {bind_address}!");
     axum::Server::bind(&bind_address)
@@ -201,7 +220,7 @@ async fn fill_members() -> Result<()> {
             let user = resp.included.iter().find(|u| &u.id == user_id).unwrap();
 
             get_member_tier(&state.config, &member, user).and_then(|(discord_id, tier)| {
-                tier.map(|tier| (discord_id, tier))
+                tier.map(|tier| (discord_id, PatreonTierInfo::from(tier)))
             })
         }));
 
