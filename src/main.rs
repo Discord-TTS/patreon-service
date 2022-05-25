@@ -1,3 +1,6 @@
+#![warn(clippy::pedantic)]
+#![allow(clippy::unused_async)]
+
 use std::{borrow::Cow, str::FromStr, collections::HashMap};
 
 use anyhow::Result;
@@ -26,6 +29,15 @@ struct PatreonTierInfo {
     entitled_servers: u8,
 }
 
+impl PatreonTierInfo {
+    fn fake() -> Self {
+        Self {
+            tier: u8::MAX,
+            entitled_servers: u8::MAX,
+        }
+    }
+}
+
 impl From<PatreonTier> for PatreonTierInfo {
     fn from(tier: PatreonTier) -> Self {
         Self {
@@ -49,8 +61,9 @@ struct Config {
     basic_tier_id: String,
     extra_tier_id: String,
     webhook_secret: String,
-    creator_access_token: String,
     bind_address: Option<String>,
+    creator_access_token: String,
+    #[serde(default)] preset_members: Vec<DiscordUserId>,
 }
 
 
@@ -81,7 +94,7 @@ struct FetchMember {
 }
 
 async fn fetch_member(axum::extract::Path(payload): axum::extract::Path<FetchMember>) -> impl axum::response::IntoResponse {
-    let state = STATE.get().unwrap();    
+    let state = STATE.get().unwrap();
     axum::Json(state.members.read().get(&payload.member_id).copied())
 }
 
@@ -109,11 +122,12 @@ async fn webhook_recv(
 
     let event = require!(headers.get("X-Patreon-Event"), Ok(())).to_str()?;
     if matches!(event, "members:pledge:create" | "members:pledge:delete" | "members:pledge:update" | "members:create") {
-        fill_members().await.map_err(Into::into) // Just refresh all the members
+        fill_members().await?; // Just refresh all the members
     } else {
         tracing::info!("Unknown event: {event}");
-        Ok(())
     }
+
+    Ok(())
 }
 
 
@@ -147,8 +161,9 @@ async fn main() -> Result<()> {
                     break
                 }
 
-                if let Err(err) = fill_members().await {
-                    tracing::error!("{:?}", err);
+                match fill_members().await {
+                    Ok(len) => tracing::info!("Refreshed {len} members"),
+                    Err(err) => tracing::error!("{err:?}"),
                 }
             }});
             tx
@@ -193,7 +208,7 @@ fn get_member_tier(config: &Config, member: &models::RawPatreonMember, user: &mo
     })
 }
 
-async fn fill_members() -> Result<()> {
+async fn fill_members() -> Result<usize> {
     let state = STATE.get().unwrap();
 
     let mut url = reqwest::Url::parse(&format!("{BASE_URL}/campaigns/{}/members", state.config.campaign_id))?;
@@ -227,9 +242,12 @@ async fn fill_members() -> Result<()> {
         if let Some(cursors) = resp.meta.pagination.cursors {
             cursor = Cow::Owned(cursors.next);
         } else {
+            members.extend(state.config.preset_members.iter().map(|id| (*id, PatreonTierInfo::fake())));
             members.shrink_to_fit();
+
+            let len = members.len();
             *state.members.write() = members;
-            break Ok(())
+            break Ok(len)
         }
     }
 }
