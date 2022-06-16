@@ -62,10 +62,16 @@ struct Config {
     extra_tier_id: String,
     webhook_secret: String,
     bind_address: Option<String>,
-    creator_access_token: String,
     #[serde(default)] preset_members: Vec<DiscordUserId>,
+    #[serde(deserialize_with = "add_bearer")] creator_access_token: HeaderValue,
 }
 
+fn add_bearer<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<HeaderValue, D::Error> {
+    let mut token: String = serde::Deserialize::deserialize(deserializer)?;
+    token.insert_str(0, "Bearer ");
+
+    HeaderValue::try_from(token).map_err(serde::de::Error::custom)
+}
 
 struct State {
     members: parking_lot::RwLock<HashMap<DiscordUserId, PatreonTierInfo>>,
@@ -219,7 +225,7 @@ async fn fill_members() -> Result<usize> {
 
     let mut cursor = Cow::Borrowed("");
     let headers = reqwest::header::HeaderMap::from_iter([
-        (reqwest::header::AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {}", state.config.creator_access_token))?)
+        (reqwest::header::AUTHORIZATION, state.config.creator_access_token.clone())
     ]);
 
     let mut members = HashMap::with_capacity(state.members.read().len());
