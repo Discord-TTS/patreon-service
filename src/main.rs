@@ -234,7 +234,10 @@ async fn fill_members() -> Result<usize> {
         let mut url = url.clone();
         url.query_pairs_mut().append_pair("page[cursor]", &cursor);
 
-        let resp: models::RawPatreonResponse = state.reqwest.get(url).headers(headers.clone()).send().await?.json().await?;
+        let resp: models::RawPatreonResponse = state.reqwest
+            .get(url).headers(headers.clone())
+            .send().await?.error_for_status()?
+            .json().await?;
 
         members.extend(resp.data.into_iter().filter_map(|member| {
             let user_id = &member.relationships.user.data.id;
