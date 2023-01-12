@@ -248,8 +248,8 @@ async fn fill_members() -> Result<usize> {
             })
         }));
 
-        if let Some(cursors) = resp.meta.pagination.cursors {
-            cursor = Cow::Owned(cursors.next);
+        if let Some(next_cursor) = resp.meta.pagination.cursors.and_then(|cursors| cursors.next) {
+            cursor = Cow::Owned(next_cursor);
         } else {
             members.extend(state.config.preset_members.iter().map(|id| (*id, PatreonTierInfo::fake())));
             members.shrink_to_fit();
