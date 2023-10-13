@@ -19,7 +19,7 @@ COPY . .
 RUN cargo build --release
 
 # Now make the runtime container
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
 COPY --from=builder /build/target/release/patreon-service /usr/local/bin/patreon-service
 
