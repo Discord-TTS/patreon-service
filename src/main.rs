@@ -4,7 +4,7 @@
 use std::{borrow::Cow, str::FromStr, collections::HashMap};
 
 use anyhow::Result;
-use once_cell::sync::OnceCell;
+use std::sync::OnceLock;
 use hmac::{Mac as _, digest::FixedOutput};
 use subtle::ConstantTimeEq;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -80,7 +80,7 @@ struct State {
     config: Config,
 }
 
-static STATE: OnceCell<State> = OnceCell::new();
+static STATE: OnceLock<State> = OnceLock::new();
 
 
 fn check_md5(key: &[u8], untrusted_signature: &[u8], untrusted_data: &[u8]) -> Result<bool> {
@@ -198,11 +198,11 @@ async fn main() -> Result<()> {
 const BASE_URL: &str = "https://www.patreon.com/api/oauth2/v2";
 
 fn get_member_tier(config: &Config, member: &models::RawPatreonMember, user: &models::RawPatreonUser) -> Option<(DiscordUserId, Option<PatreonTier>)> {
-    user.attributes.social_connections.as_ref().and_then(|socials| socials.discord.as_ref()).map(|discord_info| {
+    user.attributes.social_connections.as_ref().and_then(|socials| socials.discord.as_ref()).and_then(|discord_info| {
         let check_tier = |tier_id| member.relationships.currently_entitled_tiers.data.iter().any(|tier| tier_id == &tier.id);
 
-        (
-            DiscordUserId(discord_info.user_id.parse().unwrap()),
+        discord_info.user_id.as_ref().map(|user_id| (
+            DiscordUserId(user_id.parse().unwrap()),
             if check_tier(&config.extra_tier_id) {
                 Some(PatreonTier::Extra)
             } else if check_tier(&config.basic_tier_id) {
@@ -210,7 +210,7 @@ fn get_member_tier(config: &Config, member: &models::RawPatreonMember, user: &mo
             } else {
                 None
             }
-        )
+        ))
     })
 }
 

@@ -49,7 +49,7 @@ pub struct RawPatreonSocialConnections {
 
 #[derive(serde::Deserialize)]
 pub struct RawPatreonDiscordConnection {
-    pub user_id: String
+    pub user_id: Option<String>
 }
 
 #[derive(serde::Deserialize)]
