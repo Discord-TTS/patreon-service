@@ -1,5 +1,4 @@
 #![warn(clippy::pedantic)]
-#![allow(clippy::unused_async)]
 
 use std::{borrow::Cow, str::FromStr, collections::HashMap};
 
@@ -148,7 +147,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::registry().with(fmt_layer).with(filter).init();
 
     let mut config: Config = toml::from_str(&std::fs::read_to_string("config.toml")?)?;
-    let bind_address = config.bind_address.take().unwrap().parse()?;
+    let bind_address: std::net::SocketAddr = config.bind_address.take().unwrap().parse()?;
 
     STATE.set(State {
         config,
@@ -185,8 +184,9 @@ async fn main() -> Result<()> {
         .route("/members", axum::routing::get(fetch_members));
 
     tracing::info!("Binding to {bind_address}!");
-    axum::Server::bind(&bind_address)
-        .serve(app.into_make_service())
+
+    let listener = tokio::net::TcpListener::bind(bind_address).await?;
+    axum::serve(listener, app.into_make_service())
         .with_graceful_shutdown(async {drop(tokio::signal::ctrl_c().await)})
         .await?;
 
