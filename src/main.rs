@@ -1,6 +1,6 @@
 #![warn(clippy::pedantic)]
 
-use std::{borrow::Cow, str::FromStr, collections::HashMap};
+use std::{str::FromStr, collections::HashMap};
 
 use anyhow::Result;
 use std::sync::OnceLock;
@@ -223,14 +223,14 @@ async fn fill_members() -> Result<usize> {
         .append_pair("include", "user,currently_entitled_tiers")
         .finish();
 
-    let mut cursor = Cow::Borrowed("");
+    let mut next_cursor = Some(String::new());
     let headers = reqwest::header::HeaderMap::from_iter([
         (reqwest::header::AUTHORIZATION, state.config.creator_access_token.clone())
     ]);
 
     let mut members = HashMap::with_capacity(state.members.read().len());
 
-    loop {
+    while let Some(cursor) = next_cursor {
         let mut url = url.clone();
         url.query_pairs_mut().append_pair("page[cursor]", &cursor);
 
@@ -248,17 +248,15 @@ async fn fill_members() -> Result<usize> {
             })
         }));
 
-        if let Some(next_cursor) = resp.meta.pagination.cursors.and_then(|cursors| cursors.next) {
-            cursor = Cow::Owned(next_cursor);
-        } else {
-            members.extend(state.config.preset_members.iter().map(|id| (*id, PatreonTierInfo::fake())));
-            members.shrink_to_fit();
-
-            let len = members.len();
-            *state.members.write() = members;
-            break Ok(len)
-        }
+        next_cursor = resp.meta.pagination.cursors.and_then(|cursors| cursors.next);
     }
+
+    members.extend(state.config.preset_members.iter().map(|id| (*id, PatreonTierInfo::fake())));
+    members.shrink_to_fit();
+
+    let len = members.len();
+    *state.members.write() = members;
+    Ok(len)
 }
 
 
