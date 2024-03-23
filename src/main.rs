@@ -73,7 +73,7 @@ fn add_bearer<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Heade
 }
 
 struct State {
-    members: parking_lot::RwLock<HashMap<DiscordUserId, PatreonTierInfo>>,
+    members: std::sync::RwLock<HashMap<DiscordUserId, PatreonTierInfo>>,
     refresh_task: tokio::sync::mpsc::Sender<()>,
     reqwest: reqwest::Client,
     config: Config,
@@ -100,12 +100,16 @@ struct FetchMember {
 
 async fn fetch_member(axum::extract::Path(payload): axum::extract::Path<FetchMember>) -> impl axum::response::IntoResponse {
     let state = STATE.get().unwrap();
-    axum::Json(state.members.read().get(&payload.member_id).copied())
+    let members = state.members.read().expect("poison");
+
+    axum::Json(members.get(&payload.member_id).copied())
 }
 
 async fn fetch_members() -> impl axum::response::IntoResponse {
     let state = STATE.get().unwrap();    
-    axum::Json(state.members.read().clone())
+    let members = state.members.read().expect("poison");
+
+    axum::Json(members.clone())
 }
 
 async fn refresh_members() {
@@ -152,7 +156,7 @@ async fn main() -> Result<()> {
     STATE.set(State {
         config,
         reqwest: reqwest::Client::new(),
-        members: parking_lot::RwLock::new(HashMap::new()),
+        members: std::sync::RwLock::new(HashMap::new()),
         refresh_task: {
             let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
@@ -228,7 +232,10 @@ async fn fill_members() -> Result<usize> {
         (reqwest::header::AUTHORIZATION, state.config.creator_access_token.clone())
     ]);
 
-    let mut members = HashMap::with_capacity(state.members.read().len());
+    let mut members = {
+        let members = state.members.read().expect("poison");
+        HashMap::with_capacity(members.len())
+    };
 
     while let Some(cursor) = next_cursor {
         let mut url = url.clone();
@@ -255,7 +262,7 @@ async fn fill_members() -> Result<usize> {
     members.shrink_to_fit();
 
     let len = members.len();
-    *state.members.write() = members;
+    *state.members.write().expect("poison") = members;
     Ok(len)
 }
 
