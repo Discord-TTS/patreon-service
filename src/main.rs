@@ -1,10 +1,12 @@
 #![warn(clippy::pedantic)]
 
-use std::{collections::HashMap, str::FromStr, sync::OnceLock, time::Duration};
+use std::{collections::HashMap, fmt::Display, str::FromStr, sync::OnceLock, time::Duration};
 
 use anyhow::Result;
+use arrayvec::ArrayString;
 use axum::{extract::Path, http::HeaderValue, response::Response};
 use hmac::{digest::FixedOutput, Mac as _};
+use serde_cow::CowStr;
 use subtle::ConstantTimeEq;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -53,14 +55,28 @@ struct DiscordUserId(u64);
 #[derive(serde::Deserialize)]
 struct Config {
     campaign_id: String,
-    basic_tier_id: String,
-    extra_tier_id: String,
+    #[serde(deserialize_with = "deserialize_from_str")]
+    basic_tier_id: u32,
+    #[serde(deserialize_with = "deserialize_from_str")]
+    extra_tier_id: u32,
     webhook_secret: String,
-    bind_address: Option<String>,
+    bind_address: Option<std::net::SocketAddr>,
     #[serde(default)]
     preset_members: Vec<DiscordUserId>,
     #[serde(deserialize_with = "add_bearer")]
     creator_access_token: HeaderValue,
+}
+
+fn deserialize_from_str<'de, D, V>(deserializer: D) -> Result<V, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    <V as FromStr>::Err: Display,
+    V: FromStr,
+{
+    use serde::{de::Error, Deserialize};
+
+    let value_str = <CowStr<'de>>::deserialize(deserializer)?;
+    value_str.0.parse().map_err(D::Error::custom)
 }
 
 fn add_bearer<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<HeaderValue, D::Error> {
@@ -149,7 +165,7 @@ async fn main() -> Result<()> {
         .init();
 
     let mut config: Config = toml::from_str(&std::fs::read_to_string("config.toml")?)?;
-    let bind_address: std::net::SocketAddr = config.bind_address.take().unwrap().parse()?;
+    let bind_address = config.bind_address.take().unwrap();
 
     let state = State {
         config,
@@ -198,7 +214,7 @@ async fn main() -> Result<()> {
 
 const BASE_URL: &str = "https://www.patreon.com/api/oauth2/v2";
 
-fn check_tier(member: &models::RawPatreonMember, tier_id: &str) -> bool {
+fn check_tier(member: &models::RawPatreonMember, tier_id: u32) -> bool {
     member
         .relationships
         .currently_entitled_tiers
@@ -215,16 +231,15 @@ fn get_member_tier(
     let socials = user.attributes.social_connections.as_ref()?;
     let user_id = socials.discord.as_ref()?.user_id.as_ref()?;
 
-    let id = DiscordUserId(user_id.parse().unwrap());
-    let tier = if check_tier(member, &config.extra_tier_id) {
+    let tier = if check_tier(member, config.extra_tier_id) {
         Some(PatreonTier::Extra)
-    } else if check_tier(member, &config.basic_tier_id) {
+    } else if check_tier(member, config.basic_tier_id) {
         Some(PatreonTier::Basic)
     } else {
         None
     };
 
-    Some((id, tier))
+    Some((DiscordUserId(user_id.0), tier))
 }
 
 async fn fill_members() -> Result<usize> {
@@ -241,7 +256,7 @@ async fn fill_members() -> Result<usize> {
         .append_pair("include", "user,currently_entitled_tiers")
         .finish();
 
-    let mut next_cursor = Some(String::new());
+    let mut next_cursor = Some(ArrayString::new());
     let headers = reqwest::header::HeaderMap::from_iter([(
         reqwest::header::AUTHORIZATION,
         state.config.creator_access_token.clone(),
@@ -257,7 +272,8 @@ async fn fill_members() -> Result<usize> {
         url.query_pairs_mut().append_pair("page[cursor]", &cursor);
 
         let resp = reqwest.get(url).headers(headers.clone()).send().await?;
-        let resp: models::RawPatreonResponse = resp.error_for_status()?.json().await?;
+        let resp = resp.error_for_status()?.text().await?;
+        let resp: models::RawPatreonResponse = serde_json::from_str(&resp)?;
 
         members.extend(resp.data.into_iter().filter_map(|member| {
             let user_id = &member.relationships.user.data.id;
