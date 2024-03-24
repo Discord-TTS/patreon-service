@@ -18,12 +18,12 @@ pub struct RawPatreonRelationships {
 
 #[derive(serde::Deserialize)]
 pub struct RawPatreonIdData {
-    pub data: RawPatreonId
+    pub data: RawPatreonId,
 }
 
 #[derive(serde::Deserialize)]
 pub struct RawPatreonId {
-    pub id: String
+    pub id: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -34,27 +34,27 @@ pub struct RawPatreonTierRelationship {
 #[derive(serde::Deserialize)]
 pub struct RawPatreonUser {
     pub id: String,
-    pub attributes: RawPatreonUserAttributes
+    pub attributes: RawPatreonUserAttributes,
 }
 
 #[derive(serde::Deserialize)]
 pub struct RawPatreonUserAttributes {
-    pub social_connections: Option<RawPatreonSocialConnections>
+    pub social_connections: Option<RawPatreonSocialConnections>,
 }
 
 #[derive(serde::Deserialize)]
 pub struct RawPatreonSocialConnections {
-    pub discord: Option<RawPatreonDiscordConnection>
+    pub discord: Option<RawPatreonDiscordConnection>,
 }
 
 #[derive(serde::Deserialize)]
 pub struct RawPatreonDiscordConnection {
-    pub user_id: Option<String>
+    pub user_id: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
 pub struct RawPatreonMeta {
-    pub pagination: RawPatreonPagination
+    pub pagination: RawPatreonPagination,
 }
 
 #[derive(serde::Deserialize)]
@@ -64,5 +64,5 @@ pub struct RawPatreonPagination {
 
 #[derive(serde::Deserialize)]
 pub struct RawPatreonCursors {
-    pub next: Option<String>
+    pub next: Option<String>,
 }
