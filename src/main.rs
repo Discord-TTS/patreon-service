@@ -167,9 +167,13 @@ async fn main() -> Result<()> {
     let mut config: Config = toml::from_str(&std::fs::read_to_string("config.toml")?)?;
     let bind_address = config.bind_address.take().unwrap();
 
+    let reqwest = reqwest::Client::builder()
+        .user_agent("Discord-TTS/patreon-service")
+        .build()?;
+
     let state = State {
         config,
-        reqwest: reqwest::Client::new(),
+        reqwest,
         members: std::sync::RwLock::new(HashMap::new()),
         refresh_task: {
             let (tx, mut rx) = tokio::sync::mpsc::channel(1);
