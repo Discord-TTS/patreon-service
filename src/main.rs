@@ -2,6 +2,7 @@
 
 use std::{collections::HashMap, fmt::Display, str::FromStr, sync::OnceLock, time::Duration};
 
+use aformat::{aformat, astr};
 use anyhow::Result;
 use arrayvec::ArrayString;
 use axum::{extract::Path, http::HeaderValue, response::Response};
@@ -54,7 +55,8 @@ struct DiscordUserId(u64);
 
 #[derive(serde::Deserialize)]
 struct Config {
-    campaign_id: String,
+    #[serde(deserialize_with = "deserialize_from_str")]
+    campaign_id: u64,
     #[serde(deserialize_with = "deserialize_from_str")]
     basic_tier_id: u32,
     #[serde(deserialize_with = "deserialize_from_str")]
@@ -216,7 +218,9 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-const BASE_URL: &str = "https://www.patreon.com/api/oauth2/v2";
+fn base_url() -> ArrayString<37> {
+    astr!("https://www.patreon.com/api/oauth2/v2")
+}
 
 fn check_tier(member: &models::RawPatreonMember, tier_id: u32) -> bool {
     member
@@ -250,8 +254,9 @@ async fn fill_members() -> Result<usize> {
     let state = STATE.get().unwrap();
 
     let reqwest = &state.reqwest;
-    let mut url = reqwest::Url::parse(&format!(
-        "{BASE_URL}/campaigns/{}/members",
+    let mut url = reqwest::Url::parse(&aformat!(
+        "{}/campaigns/{}/members",
+        base_url(),
         state.config.campaign_id
     ))?;
 
