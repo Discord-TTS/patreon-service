@@ -3,12 +3,10 @@ name = "patreon-service"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 tracing = "0.1"
 tracing-subscriber = "0.3"
-axum = "0.7"
+axum = "0.8"
 toml = "0.8"
 md-5 = "0.10"
 hmac = "0.12"

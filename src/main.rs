@@ -205,7 +205,7 @@ async fn main() -> Result<()> {
     fill_members().await?;
 
     let app = axum::Router::new()
-        .route("/members/:member_id", axum::routing::get(fetch_member))
+        .route("/members/{member_id}", axum::routing::get(fetch_member))
         .route("/refresh", axum::routing::post(refresh_members))
         .route("/patreon", axum::routing::post(webhook_recv))
         .route("/members", axum::routing::get(fetch_members));
