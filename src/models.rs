@@ -76,3 +76,13 @@ pub struct RawPatreonPagination {
 pub struct RawPatreonCursors {
     pub next: Option<ArrayString<32>>,
 }
+
+#[derive(serde::Deserialize)]
+pub struct RawPatreonError {
+    pub errors: [RawPatreonRateLimit; 1],
+}
+
+#[derive(serde::Deserialize)]
+pub struct RawPatreonRateLimit {
+    pub retry_after_seconds: u16,
+}

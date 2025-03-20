@@ -5,8 +5,10 @@ use std::{collections::HashMap, fmt::Display, str::FromStr, sync::OnceLock, time
 use aformat::{aformat, astr};
 use anyhow::Result;
 use arrayvec::ArrayString;
-use axum::{extract::Path, http::HeaderValue, response::Response};
+use axum::{extract::Path, http::HeaderValue};
 use hmac::{digest::FixedOutput, Mac as _};
+use models::{RawPatreonError, RawPatreonRateLimit};
+use reqwest::StatusCode;
 use serde_cow::CowStr;
 use subtle::ConstantTimeEq;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -250,6 +252,17 @@ fn get_member_tier(
     Some((DiscordUserId(user_id.0), tier))
 }
 
+async fn handle_rate_limit(resp: reqwest::Response) -> Result<()> {
+    let resp_text = resp.text().await?;
+    let [RawPatreonRateLimit {
+        retry_after_seconds,
+    }] = serde_json::from_str::<RawPatreonError>(&resp_text)?.errors;
+
+    tracing::info!("Rate limited, waiting for {retry_after_seconds} seconds");
+    tokio::time::sleep(Duration::from_secs(retry_after_seconds.into())).await;
+    Ok(())
+}
+
 async fn fill_members() -> Result<usize> {
     let state = STATE.get().unwrap();
 
@@ -277,11 +290,18 @@ async fn fill_members() -> Result<usize> {
     };
 
     while let Some(cursor) = next_cursor {
-        let mut url = url.clone();
-        url.query_pairs_mut().append_pair("page[cursor]", &cursor);
+        let resp = loop {
+            let mut url = url.clone();
+            url.query_pairs_mut().append_pair("page[cursor]", &cursor);
 
-        let resp = reqwest.get(url).headers(headers.clone()).send().await?;
-        let resp = resp.error_for_status()?.text().await?;
+            let resp = reqwest.get(url).headers(headers.clone()).send().await?;
+            match resp.status() {
+                StatusCode::OK => break resp.text().await?,
+                StatusCode::TOO_MANY_REQUESTS => handle_rate_limit(resp).await?,
+                _ => return Err(resp.error_for_status().unwrap_err().into()),
+            }
+        };
+
         let resp: models::RawPatreonResponse = serde_json::from_str(&resp)?;
 
         members.extend(resp.data.into_iter().filter_map(|member| {
@@ -331,7 +351,7 @@ impl std::fmt::Display for Error {
 }
 
 impl axum::response::IntoResponse for Error {
-    fn into_response(self) -> Response {
+    fn into_response(self) -> axum::response::Response {
         tracing::error!("{self:?}");
         (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
