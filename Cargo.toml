@@ -23,12 +23,12 @@ thiserror = "2.0.12"
 [dependencies.reqwest]
 version = "0.12"
 default-features = false
-features = ["rustls-tls"]
+features = ["rustls-tls", "json"]
 
 [dependencies.serde]
 version = "1"
-features = ["derive"]
+features = ["derive", "rc"]
 
 [dependencies.tokio]
 version = "1"
-features = ["macros", "rt-multi-thread", "signal"]
+features = ["macros", "rt-multi-thread", "signal", "fs"]

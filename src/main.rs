@@ -1,17 +1,25 @@
 #![warn(clippy::pedantic)]
 
-use std::{collections::HashMap, fmt::Display, str::FromStr, sync::OnceLock, time::Duration};
+use std::{
+    collections::HashMap,
+    str::FromStr,
+    sync::{OnceLock, RwLock},
+    time::Duration,
+};
 
 use aformat::{aformat, astr};
 use arrayvec::ArrayString;
 use axum::{extract::Path, http::HeaderValue};
-use models::{RawPatreonError, RawPatreonRateLimit};
-use reqwest::StatusCode;
-use serde_cow::CowStr;
+use models::{RawPatreonError, RawPatreonOAuth2Response, RawPatreonRateLimit};
+use reqwest::{
+    header::{HeaderMap, InvalidHeaderValue},
+    StatusCode,
+};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod macros;
 mod models;
+mod serde_as_str;
 
 #[derive(Clone, Copy)]
 enum PatreonTier {
@@ -50,38 +58,28 @@ impl From<PatreonTier> for PatreonTierInfo {
 #[serde(transparent)]
 struct DiscordUserId(u64);
 
-#[derive(serde::Deserialize)]
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+struct AuthConfig {
+    access_token: Box<str>,
+    refresh_token: Box<str>,
+    client_id: Box<str>,
+    client_secret: Box<str>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
 struct Config {
-    #[serde(deserialize_with = "deserialize_from_str")]
+    #[serde(with = "serde_as_str")]
     campaign_id: u64,
-    #[serde(deserialize_with = "deserialize_from_str")]
+    #[serde(with = "serde_as_str")]
     basic_tier_id: u32,
-    #[serde(deserialize_with = "deserialize_from_str")]
+    #[serde(with = "serde_as_str")]
     extra_tier_id: u32,
-    bind_address: Option<std::net::SocketAddr>,
+    bind_address: std::net::SocketAddr,
     #[serde(default)]
     preset_members: Vec<DiscordUserId>,
-    #[serde(deserialize_with = "add_bearer")]
-    creator_access_token: HeaderValue,
-}
 
-fn deserialize_from_str<'de, D, V>(deserializer: D) -> Result<V, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    <V as FromStr>::Err: Display,
-    V: FromStr,
-{
-    use serde::{de::Error, Deserialize};
-
-    let value_str = <CowStr<'de>>::deserialize(deserializer)?;
-    value_str.0.parse().map_err(D::Error::custom)
-}
-
-fn add_bearer<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<HeaderValue, D::Error> {
-    let mut token: String = serde::Deserialize::deserialize(deserializer)?;
-    token.insert_str(0, "Bearer ");
-
-    HeaderValue::try_from(token).map_err(serde::de::Error::custom)
+    #[serde(rename = "Authentication")]
+    auth: RwLock<AuthConfig>,
 }
 
 struct State {
@@ -129,8 +127,8 @@ async fn main() -> Result<(), StartupError> {
         .with(filter)
         .init();
 
-    let mut config: Config = toml::from_str(&std::fs::read_to_string("config.toml")?)?;
-    let bind_address = config.bind_address.take().unwrap();
+    let config: Config = toml::from_str(&std::fs::read_to_string("config.toml")?)?;
+    let bind_address = config.bind_address;
 
     let reqwest = reqwest::Client::builder()
         .user_agent("Discord-TTS/patreon-service")
@@ -184,6 +182,13 @@ fn base_url() -> ArrayString<37> {
     astr!("https://www.patreon.com/api/oauth2/v2")
 }
 
+fn headers_from_token(access_token: &str) -> Result<HeaderMap, InvalidHeaderValue> {
+    Ok(HeaderMap::from_iter([(
+        reqwest::header::AUTHORIZATION,
+        HeaderValue::from_bytes(format!("Bearer {access_token}").as_ref())?,
+    )]))
+}
+
 fn check_tier(member: &models::RawPatreonMember, tier_id: u32) -> bool {
     member
         .relationships
@@ -212,6 +217,38 @@ fn get_member_tier(
     Some((DiscordUserId(user_id.0), tier))
 }
 
+async fn handle_token_reset(
+    reqwest: &reqwest::Client,
+    config: &Config,
+    auth_config: &mut AuthConfig,
+) -> Result<(), FillError> {
+    #[derive(serde::Serialize)]
+    struct OAuthParams<'a> {
+        grant_type: &'a str,
+        refresh_token: &'a str,
+        client_id: &'a str,
+        client_secret: &'a str,
+    }
+
+    let url = "https://www.patreon.com/api/oauth2/token";
+    let query = OAuthParams {
+        grant_type: "refresh_token",
+        client_id: &auth_config.client_id,
+        client_secret: &auth_config.client_secret,
+        refresh_token: &auth_config.refresh_token,
+    };
+
+    let resp = reqwest.post(url).query(&query).send().await?;
+    let resp: RawPatreonOAuth2Response = resp.error_for_status()?.json().await?;
+
+    auth_config.refresh_token = resp.refresh_token;
+    auth_config.access_token = resp.access_token;
+
+    *config.auth.write().expect("poison") = auth_config.clone();
+    tokio::fs::write("config.toml", toml::to_string_pretty(config)?).await?;
+    Ok(())
+}
+
 async fn handle_rate_limit(resp: reqwest::Response) -> Result<(), FillError> {
     let resp_text = resp.text().await?;
     let [RawPatreonRateLimit {
@@ -227,6 +264,7 @@ async fn fill_members() -> Result<usize, FillError> {
     let state = STATE.get().unwrap();
 
     let reqwest = &state.reqwest;
+    let mut auth_config = state.config.auth.read().unwrap().clone();
     let mut url = reqwest::Url::parse(&aformat!(
         "{}/campaigns/{}/members",
         base_url(),
@@ -240,10 +278,7 @@ async fn fill_members() -> Result<usize, FillError> {
         .finish();
 
     let mut next_cursor = Some(ArrayString::new());
-    let headers = reqwest::header::HeaderMap::from_iter([(
-        reqwest::header::AUTHORIZATION,
-        state.config.creator_access_token.clone(),
-    )]);
+    let mut headers = headers_from_token(&auth_config.access_token)?;
 
     let mut members = {
         let members = state.members.read().expect("poison");
@@ -258,6 +293,12 @@ async fn fill_members() -> Result<usize, FillError> {
             let resp = reqwest.get(url).headers(headers.clone()).send().await?;
             match resp.status() {
                 StatusCode::OK => break resp.text().await?,
+                StatusCode::UNAUTHORIZED => {
+                    tracing::info!("Access token is invalid, refreshing...");
+                    handle_token_reset(reqwest, &state.config, &mut auth_config).await?;
+                    headers = headers_from_token(&auth_config.access_token)?;
+                    tracing::info!("Refreshed token and written back to config file");
+                }
                 StatusCode::TOO_MANY_REQUESTS => handle_rate_limit(resp).await?,
                 _ => return Err(resp.error_for_status().unwrap_err().into()),
             }
@@ -298,6 +339,12 @@ enum FillError {
     Reqwest(#[from] reqwest::Error),
     #[error("URL Error: {0}")]
     Url(#[from] url::ParseError),
+    #[error("Config Serialisation Error: {0}")]
+    Toml(#[from] toml::ser::Error),
+    #[error("Config Write Error: {0}")]
+    IoWrite(#[from] std::io::Error),
+    #[error("{0}")]
+    InvalidAccessToken(#[from] InvalidHeaderValue),
 }
 
 #[derive(thiserror::Error)]

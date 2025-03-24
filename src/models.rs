@@ -1,7 +1,7 @@
 use arrayvec::ArrayString;
 use smallvec::SmallVec;
 
-use crate::deserialize_from_str;
+use crate::serde_as_str;
 
 #[derive(serde::Deserialize)]
 pub struct RawPatreonResponse {
@@ -28,7 +28,7 @@ pub struct RawPatreonIdData {
 
 #[derive(serde::Deserialize)]
 pub struct RawPatreonId {
-    #[serde(deserialize_with = "deserialize_from_str")]
+    #[serde(with = "serde_as_str")]
     pub id: u32,
 }
 
@@ -39,7 +39,7 @@ pub struct RawPatreonTierRelationship {
 
 #[derive(serde::Deserialize)]
 pub struct RawPatreonUser {
-    #[serde(deserialize_with = "deserialize_from_str")]
+    #[serde(with = "serde_as_str")]
     pub id: u32,
     pub attributes: RawPatreonUserAttributes,
 }
@@ -60,7 +60,7 @@ pub struct RawPatreonDiscordConnection {
 }
 
 #[derive(serde::Deserialize)]
-pub struct RawPatreonDiscordUserId(#[serde(deserialize_with = "deserialize_from_str")] pub u64);
+pub struct RawPatreonDiscordUserId(#[serde(with = "serde_as_str")] pub u64);
 
 #[derive(serde::Deserialize)]
 pub struct RawPatreonMeta {
@@ -75,6 +75,12 @@ pub struct RawPatreonPagination {
 #[derive(serde::Deserialize)]
 pub struct RawPatreonCursors {
     pub next: Option<ArrayString<128>>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct RawPatreonOAuth2Response {
+    pub access_token: Box<str>,
+    pub refresh_token: Box<str>,
 }
 
 #[derive(serde::Deserialize)]
