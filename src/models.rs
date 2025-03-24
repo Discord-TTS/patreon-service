@@ -74,7 +74,7 @@ pub struct RawPatreonPagination {
 
 #[derive(serde::Deserialize)]
 pub struct RawPatreonCursors {
-    pub next: Option<ArrayString<32>>,
+    pub next: Option<ArrayString<128>>,
 }
 
 #[derive(serde::Deserialize)]
