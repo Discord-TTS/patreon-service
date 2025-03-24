@@ -3,20 +3,15 @@
 use std::{collections::HashMap, fmt::Display, str::FromStr, sync::OnceLock, time::Duration};
 
 use aformat::{aformat, astr};
-use anyhow::Result;
 use arrayvec::ArrayString;
 use axum::{extract::Path, http::HeaderValue};
-use hmac::{digest::FixedOutput, Mac as _};
 use models::{RawPatreonError, RawPatreonRateLimit};
 use reqwest::StatusCode;
 use serde_cow::CowStr;
-use subtle::ConstantTimeEq;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod macros;
 mod models;
-
-type ResponseResult<T> = Result<T, Error>;
 
 #[derive(Clone, Copy)]
 enum PatreonTier {
@@ -63,7 +58,6 @@ struct Config {
     basic_tier_id: u32,
     #[serde(deserialize_with = "deserialize_from_str")]
     extra_tier_id: u32,
-    webhook_secret: String,
     bind_address: Option<std::net::SocketAddr>,
     #[serde(default)]
     preset_members: Vec<DiscordUserId>,
@@ -99,14 +93,6 @@ struct State {
 
 static STATE: OnceLock<State> = OnceLock::new();
 
-fn check_md5(key: &[u8], untrusted_signature: &[u8], untrusted_data: &[u8]) -> Result<bool> {
-    let mut mac = hmac::Hmac::<md5::Md5>::new_from_slice(key)?;
-    mac.update(untrusted_data);
-
-    let correct_sig = mac.finalize_fixed();
-    Ok(correct_sig.ct_eq(untrusted_signature).into())
-}
-
 #[derive(serde::Deserialize)]
 struct FetchMember {
     member_id: DiscordUserId,
@@ -131,33 +117,8 @@ async fn refresh_members() {
     state.refresh_task.send(()).await.unwrap();
 }
 
-async fn webhook_recv(headers: axum::http::HeaderMap, payload: String) -> ResponseResult<()> {
-    if check_md5(
-        STATE.get().unwrap().config.webhook_secret.as_bytes(),
-        require!(headers.get("X-Patreon-Signature"), Ok(())).as_bytes(),
-        payload.as_bytes(),
-    )? {
-        return Err(Error::SignatureMismatch);
-    };
-
-    let event = require!(headers.get("X-Patreon-Event"), Ok(())).to_str()?;
-    if matches!(
-        event,
-        "members:pledge:create"
-            | "members:pledge:delete"
-            | "members:pledge:update"
-            | "members:create"
-    ) {
-        fill_members().await?; // Just refresh all the members
-    } else {
-        tracing::info!("Unknown event: {event}");
-    }
-
-    Ok(())
-}
-
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<(), StartupError> {
     let fmt_layer = tracing_subscriber::fmt::layer();
     let filter = tracing_subscriber::filter::LevelFilter::from_str(
         &std::env::var("LOG_LEVEL").unwrap_or_else(|_| String::from("INFO")),
@@ -207,7 +168,6 @@ async fn main() -> Result<()> {
     let app = axum::Router::new()
         .route("/members/{member_id}", axum::routing::get(fetch_member))
         .route("/refresh", axum::routing::post(refresh_members))
-        .route("/patreon", axum::routing::post(webhook_recv))
         .route("/members", axum::routing::get(fetch_members));
 
     tracing::info!("Binding to {bind_address}!");
@@ -252,7 +212,7 @@ fn get_member_tier(
     Some((DiscordUserId(user_id.0), tier))
 }
 
-async fn handle_rate_limit(resp: reqwest::Response) -> Result<()> {
+async fn handle_rate_limit(resp: reqwest::Response) -> Result<(), FillError> {
     let resp_text = resp.text().await?;
     let [RawPatreonRateLimit {
         retry_after_seconds,
@@ -263,7 +223,7 @@ async fn handle_rate_limit(resp: reqwest::Response) -> Result<()> {
     Ok(())
 }
 
-async fn fill_members() -> Result<usize> {
+async fn fill_members() -> Result<usize, FillError> {
     let state = STATE.get().unwrap();
 
     let reqwest = &state.reqwest;
@@ -329,34 +289,34 @@ async fn fill_members() -> Result<usize> {
     Ok(len)
 }
 
-#[derive(Debug)]
-enum Error {
-    SignatureMismatch,
-    Unknown(anyhow::Error),
+#[derive(Debug, thiserror::Error)]
+enum FillError {
+    #[error("JSON Error: {0}")]
+    Serde(#[from] serde_json::Error),
+    #[error("Reqwest Error: {0}")]
+    Reqwest(#[from] reqwest::Error),
+    #[error("URL Error: {0}")]
+    Url(#[from] url::ParseError),
 }
 
-impl<E: Into<anyhow::Error>> From<E> for Error {
-    fn from(e: E) -> Self {
-        Self::Unknown(e.into())
-    }
+#[derive(thiserror::Error)]
+enum StartupError {
+    #[error("Initial Fill Error: {0}")]
+    InitialFill(#[from] FillError),
+    #[error("Reqwest Init Error: {0}")]
+    Reqwest(#[from] reqwest::Error),
+    #[error("Port Binding error: {0}")]
+    Bind(#[from] std::io::Error),
+    #[error("Axum Error: {0}")]
+    Axum(#[from] axum::Error),
+    #[error("Config Parse Error: {0}")]
+    Toml(#[from] toml::de::Error),
+    #[error("Log Level Parse Error: {0}")]
+    Tracing(#[from] tracing::metadata::ParseLevelFilterError),
 }
 
-impl std::fmt::Display for Error {
+impl std::fmt::Debug for StartupError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::SignatureMismatch => write!(f, "Signature mismatch!"),
-            Self::Unknown(e) => write!(f, "Unknown error: {e}"),
-        }
-    }
-}
-
-impl axum::response::IntoResponse for Error {
-    fn into_response(self) -> axum::response::Response {
-        tracing::error!("{self:?}");
-        (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            self.to_string(),
-        )
-            .into_response()
+        <Self as std::fmt::Display>::fmt(self, f)
     }
 }
