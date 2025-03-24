@@ -234,6 +234,7 @@ async fn fill_members() -> Result<usize, FillError> {
     ))?;
 
     url.query_pairs_mut()
+        .append_pair("page[count]", "1000")
         .append_pair("fields[user]", "social_connections")
         .append_pair("include", "user,currently_entitled_tiers")
         .finish();
