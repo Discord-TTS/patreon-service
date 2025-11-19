@@ -142,12 +142,19 @@ async fn main() -> Result<(), StartupError> {
             let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
             tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
                 loop {
-                    let res = tokio::time::timeout(Duration::from_secs(60 * 60), rx.recv()).await;
-
-                    if res.as_ref().map(Option::is_none).unwrap_or(false) {
-                        break;
-                    }
+                    tokio::select!(
+                        // Wait for the interval to tick...
+                        _ = interval.tick() => {},
+                        // or a message to be recieved...
+                        msg = rx.recv() => {
+                            // as long as the message is not none, as that means shutdown.
+                            if msg.is_none() {
+                                break
+                            }
+                        }
+                    );
 
                     match fill_members().await {
                         Ok(len) => tracing::info!("Refreshed {len} members"),
