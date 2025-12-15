@@ -3,12 +3,15 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable-small";
     flake-utils.url = "github:numtide/flake-utils";
+
+    tts-utils.url = "github:Discord-TTS/shared-workflows";
   };
 
   outputs =
     {
       nixpkgs,
       flake-utils,
+      tts-utils,
       ...
     }:
     flake-utils.lib.eachDefaultSystem (
@@ -26,26 +29,9 @@
           cargoLock.lockFile = ./Cargo.lock;
         };
       in
-      {
-        nixpkgs = pkgs;
-
-        packages.default = patreonServicePkg;
-        devShell = pkgs.mkShell {
-          inputsFrom = [ patreonServicePkg ];
-          buildInputs = with pkgs; [
-            rustfmt
-            clippy
-          ];
-
-          RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
-        };
-
-        dockerImage = pkgs.dockerTools.buildLayeredImage {
-          name = pkgDesc.name;
-          tag = "latest-${pkgs.stdenv.system}";
-
-          config.Cmd = pkgs.lib.getExe patreonServicePkg;
-        };
+      tts-utils.mkTTSModule {
+        inherit pkgs;
+        package = patreonServicePkg;
       }
     );
 }

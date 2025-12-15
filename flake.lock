@@ -37,7 +37,8 @@
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "tts-utils": "tts-utils"
       }
     },
     "systems": {
@@ -52,6 +53,21 @@
       "original": {
         "owner": "nix-systems",
         "repo": "default",
+        "type": "github"
+      }
+    },
+    "tts-utils": {
+      "locked": {
+        "lastModified": 1765809573,
+        "narHash": "sha256-fFpWdO6+1up/UlsgY5m87uWxKqJBgjo4+dlRxpZROPc=",
+        "owner": "Discord-TTS",
+        "repo": "shared-workflows",
+        "rev": "ec537f79dc4f588ab8e38d00df920985ab474122",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Discord-TTS",
+        "repo": "shared-workflows",
         "type": "github"
       }
     }
