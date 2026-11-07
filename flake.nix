@@ -25,6 +25,9 @@
           version = pkgDesc.version;
           meta.mainProgram = pkgDesc.name;
 
+          buildInputs = with pkgs; [ aws-lc ];
+          nativeBuildInputs = with pkgs; [ pkg-config ];
+
           src = pkgs.lib.sources.cleanSource ./.;
           cargoLock.lockFile = ./Cargo.lock;
         };
